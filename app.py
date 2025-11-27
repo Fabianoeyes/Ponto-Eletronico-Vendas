@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -62,8 +63,91 @@ def init_db():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            is_superadmin INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def create_admin(username: str, password: str, is_superadmin: bool = False) -> bool:
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO admins (username, password_hash, is_superadmin, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (username.strip(), hash_password(password), int(is_superadmin), brazil_now().isoformat()),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def get_admin(username: str):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM admins WHERE username = ?", (username.strip(),))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
+def update_admin_password(username: str, new_password: str) -> None:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE admins SET password_hash = ?, created_at = ? WHERE username = ?",
+        (hash_password(new_password), brazil_now().isoformat(), username.strip()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def validate_credentials(username: str, password: str):
+    admin = get_admin(username)
+    if not admin:
+        return None
+    if admin["password_hash"] == hash_password(password):
+        return admin
+    return None
+
+
+def total_admins() -> int:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM admins")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
+
+
+def list_admins():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT username, is_superadmin, created_at FROM admins ORDER BY is_superadmin DESC, username"
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
 def get_registro(usuario: str, data_str: str):
     conn = get_connection()
@@ -172,19 +256,58 @@ param_admin = params.get("admin", [None])[0]
 
 st.sidebar.title("Configuração de acesso")
 
-modo_admin = False
-if param_admin == "1":
-    modo_admin = True
-else:
-    # opção simples de login admin com senha fixa (pode trocar)
-    tipo = st.sidebar.radio("Você é:", ["Colaborador", "Administrador"])
-    if tipo == "Administrador":
-        senha = st.sidebar.text_input("Senha de administrador", type="password")
-        if senha == "prospera_admin":  # troque por algo mais seguro
-            modo_admin = True
+admin_session = st.session_state.get("admin_user")
+modo_admin = bool(admin_session)
+
+is_first_admin_setup = total_admins() == 0
+
+if modo_admin and param_admin != "1":
+    st.sidebar.success(
+        f"Logado como {admin_session['username']} ({'Administrador geral' if admin_session['is_superadmin'] else 'Subadministrador'})"
+    )
+    if st.sidebar.button("Sair do modo administrador"):
+        st.session_state.pop("admin_user", None)
+        st.rerun()
+
+elif is_first_admin_setup:
+    st.sidebar.warning("Nenhum administrador geral cadastrado. Crie a senha principal para continuar.")
+    with st.sidebar.form("criar_superadmin"):
+        novo_usuario = st.text_input("Usuário do administrador geral", value="admin")
+        nova_senha = st.text_input("Senha", type="password")
+        confirma = st.text_input("Confirmar senha", type="password")
+        submitted = st.form_submit_button("Criar administrador geral")
+    if submitted:
+        if not novo_usuario or not nova_senha:
+            st.sidebar.error("Informe usuário e senha válidos.")
+        elif nova_senha != confirma:
+            st.sidebar.error("As senhas não conferem.")
+        elif create_admin(novo_usuario, nova_senha, is_superadmin=True):
+            st.sidebar.success("Administrador geral criado com sucesso.")
+            st.session_state["admin_user"] = {"username": novo_usuario.strip(), "is_superadmin": True}
+            st.rerun()
         else:
-            if senha:
-                st.sidebar.error("Senha inválida. Usando modo colaborador.")
+            st.sidebar.error("Usuário já existe. Escolha outro nome.")
+
+else:
+    tipo = st.sidebar.radio("Você é:", ["Colaborador", "Administrador"], index=0)
+    if tipo == "Administrador":
+        admin_usuario = st.sidebar.text_input("Usuário")
+        admin_senha = st.sidebar.text_input("Senha", type="password")
+        if st.sidebar.button("Entrar"):
+            admin_data = validate_credentials(admin_usuario, admin_senha)
+            if admin_data:
+                st.session_state["admin_user"] = {
+                    "username": admin_data["username"],
+                    "is_superadmin": bool(admin_data["is_superadmin"]),
+                }
+                st.rerun()
+            else:
+                st.sidebar.error("Credenciais inválidas.")
+        if param_admin == "1":
+            st.sidebar.info("Use seu usuário e senha para acessar o painel administrativo.")
+
+# Se estiver logado, força modo admin
+modo_admin = bool(st.session_state.get("admin_user"))
 
 # =========================
 # MODO COLABORADOR
@@ -288,6 +411,60 @@ else:
     )
 
     st.sidebar.success("Modo administrador ativo")
+
+    admin_logado = st.session_state.get("admin_user", {})
+    papel = "Administrador geral" if admin_logado.get("is_superadmin") else "Subadministrador"
+    st.info(f"Acesso autenticado como **{admin_logado.get('username', '')}** ({papel}).")
+
+    st.markdown("### Gerenciar administradores")
+    if admin_logado.get("is_superadmin"):
+        st.success("Você é o administrador geral e pode criar subadministradores.")
+        with st.form("criar_subadmin"):
+            novo_admin = st.text_input("Usuário do novo administrador")
+            senha_admin = st.text_input("Senha do novo administrador", type="password")
+            confirma_admin = st.text_input("Confirmar senha", type="password")
+            criado = st.form_submit_button("Cadastrar subadministrador")
+
+        if criado:
+            if not novo_admin or not senha_admin:
+                st.error("Informe usuário e senha para o novo administrador.")
+            elif senha_admin != confirma_admin:
+                st.error("As senhas não conferem.")
+            elif create_admin(novo_admin, senha_admin, is_superadmin=False):
+                st.success(f"Subadministrador '{novo_admin}' criado com sucesso.")
+            else:
+                st.error("Usuário já existe. Tente outro nome de acesso.")
+    else:
+        st.warning("Apenas o administrador geral pode criar novos administradores.")
+
+    with st.expander("Meus acessos", expanded=False):
+        with st.form("atualizar_senha_admin"):
+            nova_senha_admin = st.text_input("Nova senha", type="password")
+            confirma_nova = st.text_input("Confirmar nova senha", type="password")
+            alterar = st.form_submit_button("Atualizar minha senha")
+
+        if alterar:
+            if not nova_senha_admin:
+                st.error("Informe a nova senha.")
+            elif nova_senha_admin != confirma_nova:
+                st.error("As senhas não conferem.")
+            else:
+                update_admin_password(admin_logado.get("username", ""), nova_senha_admin)
+                st.success("Senha atualizada com sucesso.")
+
+    admins_cadastrados = list_admins()
+    if admins_cadastrados:
+        st.markdown("#### Administradores cadastrados")
+        df_admins = pd.DataFrame(admins_cadastrados)
+        df_admins = df_admins.rename(
+            columns={
+                "username": "Usuário",
+                "is_superadmin": "Administrador geral",
+                "created_at": "Atualizado em",
+            }
+        )
+        df_admins["Administrador geral"] = df_admins["Administrador geral"].apply(lambda x: "Sim" if x else "Não")
+        st.dataframe(df_admins)
 
     st.markdown("### Links de convite para vendedores")
     base_para_links_admin = st.text_input(
