@@ -259,6 +259,12 @@ st.sidebar.title("Configuração de acesso")
 admin_session = st.session_state.get("admin_user")
 modo_admin = bool(admin_session)
 
+# Dados lembrados localmente (no session_state do navegador)
+remembered_colab = st.session_state.get("remembered_colab", "")
+remember_colab_flag = st.session_state.get("remember_colab_flag", False)
+remembered_admin_user = st.session_state.get("remembered_admin_user", "")
+remember_admin_flag = st.session_state.get("remember_admin_flag", False)
+
 is_first_admin_setup = total_admins() == 0
 
 if modo_admin and param_admin != "1":
@@ -291,8 +297,13 @@ elif is_first_admin_setup:
 else:
     tipo = st.sidebar.radio("Você é:", ["Colaborador", "Administrador"], index=0)
     if tipo == "Administrador":
-        admin_usuario = st.sidebar.text_input("Usuário")
+        admin_usuario = st.sidebar.text_input("Usuário", value=remembered_admin_user)
         admin_senha = st.sidebar.text_input("Senha", type="password")
+        lembrar_admin = st.sidebar.checkbox(
+            "Lembrar meu usuário neste navegador",
+            value=remember_admin_flag,
+            help="Guarda apenas o nome de usuário neste dispositivo para facilitar o acesso.",
+        )
         if st.sidebar.button("Entrar"):
             admin_data = validate_credentials(admin_usuario, admin_senha)
             if admin_data:
@@ -300,11 +311,31 @@ else:
                     "username": admin_data["username"],
                     "is_superadmin": bool(admin_data["is_superadmin"]),
                 }
+                st.session_state["remember_admin_flag"] = lembrar_admin
+                if lembrar_admin and admin_usuario:
+                    st.session_state["remembered_admin_user"] = admin_usuario
+                else:
+                    st.session_state.pop("remembered_admin_user", None)
+                    st.session_state["remember_admin_flag"] = False
                 st.rerun()
             else:
                 st.sidebar.error("Credenciais inválidas.")
+                st.sidebar.info(
+                    "Dica: se esqueceu a senha, peça para o administrador geral atualizar pelo painel"
+                    " em 'Meus acessos'. Se não houver administrador geral acessível, renomeie o banco"
+                    " ponto.db e recrie o usuário principal ao iniciar o app.",
+                )
         if param_admin == "1":
             st.sidebar.info("Use seu usuário e senha para acessar o painel administrativo.")
+
+    with st.sidebar.expander("Recuperar acesso"):
+        st.markdown(
+            "- Subadministradores devem solicitar ao administrador geral a redefinição da senha na seção"
+            " 'Meus acessos'.\n"
+            "- Se o administrador geral não tiver mais a senha, renomeie o arquivo **ponto.db** para"
+            " fazer um backup e reinicie o app: um novo administrador geral poderá ser criado logo"
+            " na tela inicial."
+        )
 
 # Se estiver logado, força modo admin
 modo_admin = bool(st.session_state.get("admin_user"))
@@ -323,7 +354,18 @@ if not modo_admin:
         usuario = param_user
         st.sidebar.success(f"Usuário detectado via link: {usuario}")
     else:
-        usuario = st.sidebar.text_input("Seu nome (ou ID)", value="")
+        usuario = st.sidebar.text_input("Seu nome (ou ID)", value=remembered_colab)
+        lembrar_nome = st.sidebar.checkbox(
+            "Lembrar meu nome neste navegador",
+            value=remember_colab_flag,
+            help="Grava o nome localmente para preencher automaticamente nas próximas visitas.",
+        )
+        st.session_state["remember_colab_flag"] = lembrar_nome
+        if lembrar_nome and usuario:
+            st.session_state["remembered_colab"] = usuario
+        elif not lembrar_nome:
+            st.session_state.pop("remembered_colab", None)
+            st.session_state["remember_colab_flag"] = False
         st.sidebar.info("Você também pode receber um link do tipo ?user=SeuNome")
 
     if not usuario:
