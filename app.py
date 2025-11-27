@@ -1,9 +1,16 @@
-import streamlit as st
 import sqlite3
-from datetime import datetime, date
+from datetime import date, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+import urllib.parse
+
 import pandas as pd
+import streamlit as st
 
 DB_PATH = "ponto.db"
+BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
+LOGO_PATH = Path("assets/prospera-logo.svg")
+DEFAULT_BASE_URL = "https://ponto-eletronico-vendas.streamlit.app"
 
 # =========================
 # Funções de banco de dados
@@ -12,6 +19,31 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def brazil_now():
+    """Retorna o horário atual no fuso de Brasília."""
+    return datetime.now(BRAZIL_TZ)
+
+def render_header(title: str, subtitle: str | None = None):
+    """Renderiza o cabeçalho com o logo da Prospera no canto superior direito."""
+    title_col, logo_col = st.columns([6, 1])
+    with title_col:
+        st.title(title)
+        if subtitle:
+            st.caption(subtitle)
+    with logo_col:
+        if LOGO_PATH.exists():
+            st.image(str(LOGO_PATH), width=110)
+        else:
+            st.markdown("<div style='text-align:right;'>Prospera</div>", unsafe_allow_html=True)
+
+def gerar_link_personalizado(nome: str, base_url: str = DEFAULT_BASE_URL) -> str:
+    """Monta um link de compartilhamento para um colaborador/vendedor específico."""
+    base_limpo = base_url.strip().rstrip("/")
+    if not base_limpo or not nome.strip():
+        return ""
+    nome_codificado = urllib.parse.quote(nome.strip())
+    return f"{base_limpo}?user={nome_codificado}"
 
 def init_db():
     conn = get_connection()
@@ -47,7 +79,7 @@ def get_registro(usuario: str, data_str: str):
 def upsert_registro(usuario: str, data_str: str, hora_entrada: str = None,
                     hora_saida: str = None, atividades: str = None):
     """Cria ou atualiza o registro de ponto do usuário na data."""
-    agora = datetime.utcnow().isoformat()
+    agora = brazil_now().isoformat()
     registro = get_registro(usuario, data_str)
 
     conn = get_connection()
@@ -158,7 +190,10 @@ else:
 # MODO COLABORADOR
 # =========================
 if not modo_admin:
-    st.title("🕒 Ponto e Diário de Atividades")
+    render_header(
+        "🕒 Ponto e Diário de Atividades",
+        "Horários registrados no fuso horário de Brasília (America/Sao_Paulo).",
+    )
 
     # Identificação do colaborador
     if param_user:
@@ -173,6 +208,15 @@ if not modo_admin:
         st.stop()
 
     st.subheader(f"Olá, {usuario}! Registre seu dia de trabalho.")
+    base_para_links = st.sidebar.text_input(
+        "URL base do app",
+        value=DEFAULT_BASE_URL,
+        help="Use esta URL para gerar links personalizados com o parâmetro ?user=Nome",
+    )
+    link_usuario = gerar_link_personalizado(usuario, base_para_links)
+    if link_usuario:
+        st.sidebar.code(link_usuario, language="text")
+        st.sidebar.caption("Compartilhe este link com o colaborador para acesso rápido.")
 
     # Data da atividade
     data_sel = st.date_input("Data", value=date.today())
@@ -190,7 +234,7 @@ if not modo_admin:
         st.markdown("### Registro de ponto")
 
         if st.button("Registrar ENTRADA agora"):
-            hora = datetime.now().strftime("%H:%M")
+            hora = brazil_now().strftime("%H:%M")
             upsert_registro(usuario, data_str, hora_entrada=hora)
             st.success(f"Entrada registrada às {hora}")
             st.experimental_rerun()
@@ -199,7 +243,7 @@ if not modo_admin:
             st.info(f"Hora de entrada já registrada: **{hora_entrada_atual}**")
 
         if st.button("Registrar SAÍDA agora"):
-            hora = datetime.now().strftime("%H:%M")
+            hora = brazil_now().strftime("%H:%M")
             upsert_registro(usuario, data_str, hora_saida=hora)
             st.success(f"Saída registrada às {hora}")
             st.experimental_rerun()
@@ -238,9 +282,24 @@ if not modo_admin:
 # MODO ADMINISTRADOR
 # =========================
 else:
-    st.title("📊 Painel Administrativo - Ponto & Atividades")
+    render_header(
+        "📊 Painel Administrativo - Ponto & Atividades",
+        "Controle centralizado de pontos e diário de atividades (fuso de Brasília).",
+    )
 
     st.sidebar.success("Modo administrador ativo")
+
+    st.markdown("### Links de convite para vendedores")
+    base_para_links_admin = st.text_input(
+        "URL base do app",
+        value=DEFAULT_BASE_URL,
+        help="Informe a URL publicada do app para gerar convites com ?user=NomeDoVendedor",
+    )
+    nome_vendedor = st.text_input("Nome do vendedor para gerar link", placeholder="Ex.: Ana Souza")
+    link_convite = gerar_link_personalizado(nome_vendedor, base_para_links_admin)
+    if link_convite:
+        st.code(link_convite, language="text")
+        st.caption("Envie este link para que o vendedor já entre identificado no app.")
 
     # Filtros
     usuarios = listar_usuarios()
@@ -265,6 +324,13 @@ else:
     if df.empty:
         st.warning("Nenhum registro encontrado para os filtros selecionados.")
         st.stop()
+
+    horas_validas = df["horas_trabalhadas"].fillna(0).sum()
+    total_registros = len(df)
+    col_metricas = st.columns(3)
+    col_metricas[0].metric("Registros no período", total_registros)
+    col_metricas[1].metric("Horas somadas", f"{horas_validas:.2f} h")
+    col_metricas[2].metric("Colaboradores únicos", df["usuario"].nunique())
 
     st.subheader("Registros de ponto e atividades")
     st.dataframe(df[["usuario", "data", "hora_entrada", "hora_saida", "horas_trabalhadas", "atividades"]])

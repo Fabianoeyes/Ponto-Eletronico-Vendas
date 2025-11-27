@@ -1,0 +1,15 @@
+<svg width="240" height="80" viewBox="0 0 240 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Prospera</title>
+  <desc id="desc">Logo simplificado da Prospera</desc>
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6dd5ed;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2193b0;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect rx="14" ry="14" x="4" y="4" width="232" height="72" fill="#0b1e30" stroke="#2193b0" stroke-width="3" />
+  <circle cx="48" cy="40" r="24" fill="url(#grad)" opacity="0.95" />
+  <path d="M38 48 L48 24 L58 48 Z" fill="#0b1e30" />
+  <path d="M46 44 L52 44 L49 52 Z" fill="#ffffff" />
+  <text x="92" y="49" font-family="'Inter', 'Segoe UI', Arial" font-size="26" fill="#e8f4ff" font-weight="700">Prospera</text>
+</svg>
