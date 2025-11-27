@@ -166,7 +166,7 @@ init_db()
 st.set_page_config(page_title="Ponto & Diário de Atividades", page_icon="🕒", layout="wide")
 
 # Lê parâmetros da URL (?user=Fulano&admin=1)
-params = st.experimental_get_query_params()
+params = st.query_params
 param_user = params.get("user", [None])[0]
 param_admin = params.get("admin", [None])[0]
 
@@ -237,7 +237,7 @@ if not modo_admin:
             hora = brazil_now().strftime("%H:%M")
             upsert_registro(usuario, data_str, hora_entrada=hora)
             st.success(f"Entrada registrada às {hora}")
-            st.experimental_rerun()
+            st.rerun()
 
         if hora_entrada_atual:
             st.info(f"Hora de entrada já registrada: **{hora_entrada_atual}**")
@@ -246,7 +246,7 @@ if not modo_admin:
             hora = brazil_now().strftime("%H:%M")
             upsert_registro(usuario, data_str, hora_saida=hora)
             st.success(f"Saída registrada às {hora}")
-            st.experimental_rerun()
+            st.rerun()
 
         if hora_saida_atual:
             st.info(f"Hora de saída já registrada: **{hora_saida_atual}**")
