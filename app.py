@@ -262,9 +262,9 @@ modo_admin = bool(admin_session)
 is_first_admin_setup = total_admins() == 0
 
 if modo_admin and param_admin != "1":
-    st.sidebar.success(
-        f"Logado como {admin_session['username']} ({'Administrador geral' if admin_session['is_superadmin'] else 'Subadministrador'})"
-    )
+    admin_username = admin_session.get("username", "")
+    admin_role = "Administrador geral" if admin_session.get("is_superadmin") else "Subadministrador"
+    st.sidebar.success(f"Logado como {admin_username} ({admin_role})")
     if st.sidebar.button("Sair do modo administrador"):
         st.session_state.pop("admin_user", None)
         st.rerun()
