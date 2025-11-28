@@ -374,7 +374,7 @@ if st.session_state.user is None:
                 "name": user_row["name"],
                 "is_admin": bool(user_row["is_admin"]),
             }
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.sidebar.error("E-mail ou senha inválidos.")
 
@@ -519,7 +519,7 @@ st.sidebar.success(f"Logado como: {user['name']} ({'Admin' if user['is_admin'] e
 
 if st.sidebar.button("Sair"):
     st.session_state.user = None
-    st.experimental_rerun()
+    st.rerun()
 
 # =========================
 # VIEW COLABORADOR
@@ -546,7 +546,7 @@ def view_colaborador(user_name: str):
             hora = datetime.now().strftime("%H:%M")
             upsert_registro(user_name, data_str, hora_entrada=hora)
             st.success(f"Entrada registrada às {hora}")
-            st.experimental_rerun()
+            st.rerun()
 
         if hora_entrada_atual:
             st.info(f"Hora de entrada: **{hora_entrada_atual}**")
@@ -555,7 +555,7 @@ def view_colaborador(user_name: str):
             hora = datetime.now().strftime("%H:%M")
             upsert_registro(user_name, data_str, hora_saida=hora)
             st.success(f"Saída registrada às {hora}")
-            st.experimental_rerun()
+            st.rerun()
 
         if hora_saida_atual:
             st.info(f"Hora de saída: **{hora_saida_atual}**")
