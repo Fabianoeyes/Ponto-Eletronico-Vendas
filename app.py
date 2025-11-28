@@ -553,6 +553,20 @@ if st.session_state.user is None:
 user = st.session_state.user
 st.sidebar.success(f"Logado como: {user['name']} ({'Admin' if user['is_admin'] else 'Colaborador'})")
 
+# Permite que administradores alternem entre o painel e a tela de registro de ponto
+if "view_mode" not in st.session_state:
+    st.session_state.view_mode = "admin" if user["is_admin"] else "colab"
+
+if user["is_admin"]:
+    selected_mode = st.sidebar.radio(
+        "Escolha a tela",
+        ["Painel administrativo", "Registrar ponto/atividades"],
+        index=0 if st.session_state.view_mode == "admin" else 1,
+    )
+    st.session_state.view_mode = "admin" if selected_mode == "Painel administrativo" else "colab"
+else:
+    st.session_state.view_mode = "colab"
+
 if st.sidebar.button("Sair"):
     st.session_state.user = None
     st.rerun()
@@ -781,7 +795,7 @@ def view_admin():
 # ROTEAMENTO POR TIPO DE USUÁRIO
 # =========================
 
-if user["is_admin"]:
+if st.session_state.view_mode == "admin" and user["is_admin"]:
     view_admin()
 else:
     view_colaborador(user["name"])
