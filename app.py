@@ -8,6 +8,11 @@ import hashlib
 
 DB_PATH = "ponto.db"
 
+
+def normalize_email(email: str) -> str:
+    """Sanitize email addresses to avoid mismatches caused by spacing or casing."""
+    return email.strip().lower()
+
 # =========================
 # AUXILIARES DE SENHA / HASH
 # =========================
@@ -123,6 +128,7 @@ def ensure_default_admin():
     return None, None
 
 def get_user_by_email(email: str):
+    email = normalize_email(email)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM users WHERE email = ?", (email,))
@@ -138,6 +144,7 @@ def create_user(
     phone: str | None = None,
     recovery_method: str = "Email",
 ):
+    email = normalize_email(email)
     conn = get_connection()
     cur = conn.cursor()
     totp_secret = generate_totp_secret() if recovery_method == "Authenticator" else None
@@ -161,6 +168,7 @@ def create_user(
     return totp_secret
 
 def reset_user_password(email: str, new_password: str):
+    email = normalize_email(email)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -172,6 +180,7 @@ def reset_user_password(email: str, new_password: str):
 
 
 def set_recovery_code(email: str, code: str, expires_at: datetime):
+    email = normalize_email(email)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -183,6 +192,7 @@ def set_recovery_code(email: str, code: str, expires_at: datetime):
 
 
 def clear_recovery_state(email: str):
+    email = normalize_email(email)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
