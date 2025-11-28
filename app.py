@@ -1,7 +1,9 @@
 import streamlit as st
 import sqlite3
-from datetime import datetime, date
+import secrets
+from datetime import datetime, date, timedelta
 import pandas as pd
+import pyotp
 import hashlib
 
 DB_PATH = "ponto.db"
@@ -15,6 +17,14 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return hash_password(password) == password_hash
+
+
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def generate_recovery_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 # =========================
 # BANCO DE DADOS
@@ -59,7 +69,32 @@ def init_db():
     )
 
     conn.commit()
+    ensure_user_columns(conn)
     conn.close()
+
+
+def ensure_user_columns(conn: sqlite3.Connection):
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(users)")
+    existing_columns = {row[1] for row in cur.fetchall()}
+
+    columns_to_add = []
+    if "phone" not in existing_columns:
+        columns_to_add.append("ALTER TABLE users ADD COLUMN phone TEXT")
+    if "recovery_method" not in existing_columns:
+        columns_to_add.append("ALTER TABLE users ADD COLUMN recovery_method TEXT")
+    if "totp_secret" not in existing_columns:
+        columns_to_add.append("ALTER TABLE users ADD COLUMN totp_secret TEXT")
+    if "recovery_code" not in existing_columns:
+        columns_to_add.append("ALTER TABLE users ADD COLUMN recovery_code TEXT")
+    if "recovery_expires_at" not in existing_columns:
+        columns_to_add.append("ALTER TABLE users ADD COLUMN recovery_expires_at TEXT")
+
+    for ddl in columns_to_add:
+        cur.execute(ddl)
+    if columns_to_add:
+        conn.commit()
+
 
 def ensure_default_admin():
     """
@@ -75,12 +110,14 @@ def ensure_default_admin():
     if count == 0:
         default_email = "admin@prospera.com"
         default_pass = "Admin123!"
-        cur.execute(
-            "INSERT INTO users (email, name, password_hash, is_admin) VALUES (?, ?, ?, 1)",
-            (default_email, "Administrador", hash_password(default_pass)),
-        )
-        conn.commit()
         conn.close()
+        create_user(
+            name="Administrador",
+            email=default_email,
+            password=default_pass,
+            is_admin=True,
+            recovery_method="Email",
+        )
         return default_email, default_pass
     conn.close()
     return None, None
@@ -93,15 +130,35 @@ def get_user_by_email(email: str):
     conn.close()
     return row
 
-def create_user(name: str, email: str, password: str, is_admin: bool):
+def create_user(
+    name: str,
+    email: str,
+    password: str,
+    is_admin: bool,
+    phone: str | None = None,
+    recovery_method: str = "Email",
+):
     conn = get_connection()
     cur = conn.cursor()
+    totp_secret = generate_totp_secret() if recovery_method == "Authenticator" else None
     cur.execute(
-        "INSERT INTO users (email, name, password_hash, is_admin) VALUES (?, ?, ?, ?)",
-        (email, name, hash_password(password), 1 if is_admin else 0),
+        """
+        INSERT INTO users (email, name, password_hash, is_admin, phone, recovery_method, totp_secret)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            email,
+            name,
+            hash_password(password),
+            1 if is_admin else 0,
+            phone,
+            recovery_method,
+            totp_secret,
+        ),
     )
     conn.commit()
     conn.close()
+    return totp_secret
 
 def reset_user_password(email: str, new_password: str):
     conn = get_connection()
@@ -109,6 +166,28 @@ def reset_user_password(email: str, new_password: str):
     cur.execute(
         "UPDATE users SET password_hash = ? WHERE email = ?",
         (hash_password(new_password), email),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_recovery_code(email: str, code: str, expires_at: datetime):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET recovery_code = ?, recovery_expires_at = ? WHERE email = ?",
+        (code, expires_at.isoformat(), email),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_recovery_state(email: str):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET recovery_code = NULL, recovery_expires_at = NULL WHERE email = ?",
+        (email,),
     )
     conn.commit()
     conn.close()
@@ -163,6 +242,22 @@ def listar_usuarios_ponto():
     usuarios = [r["usuario"] for r in cur.fetchall()]
     conn.close()
     return usuarios
+
+
+def listar_recuperacoes_pendentes():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT email, recovery_method, recovery_expires_at, recovery_code
+        FROM users
+        WHERE recovery_code IS NOT NULL
+        ORDER BY recovery_expires_at DESC
+        """
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
 
 def carregar_registros(usuario: str = None, data_inicio: str = None, data_fim: str = None):
     conn = get_connection()
@@ -247,6 +342,97 @@ if st.session_state.user is None:
             st.experimental_rerun()
         else:
             st.sidebar.error("E-mail ou senha inválidos.")
+
+    with st.sidebar.expander("Esqueci a senha"):
+        recovery_email = st.text_input("E-mail cadastrado", key="recover_email")
+        recovery_method_choice = st.selectbox(
+            "Método de recuperação", ["Email", "SMS", "Authenticator"], key="recover_method"
+        )
+        user_row_for_recovery = get_user_by_email(recovery_email) if recovery_email else None
+        if user_row_for_recovery:
+            preferred = user_row_for_recovery["recovery_method"] or "Email"
+            st.caption(f"Método preferencial deste usuário: **{preferred}**")
+        if st.button("Gerar código de recuperação", key="generate_recovery_code"):
+            if not user_row_for_recovery:
+                st.error("E-mail não encontrado.")
+            elif user_row_for_recovery["recovery_method"] and (
+                recovery_method_choice != user_row_for_recovery["recovery_method"]
+            ):
+                st.warning(
+                    "Método selecionado diferente do cadastrado. Use o método preferencial para maior segurança."
+                )
+            if user_row_for_recovery:
+                if recovery_method_choice in ["Email", "SMS"]:
+                    code = generate_recovery_code()
+                    expires_at = datetime.utcnow() + timedelta(minutes=15)
+                    set_recovery_code(recovery_email, code, expires_at)
+                    st.success(
+                        f"Código gerado e enviado via {recovery_method_choice}. (Uso interno: {code})"
+                    )
+                    st.caption(
+                        "Em produção, o código seria enviado. Ele expira em 15 minutos."
+                    )
+                else:
+                    if not user_row_for_recovery["totp_secret"]:
+                        st.error(
+                            "Método Authenticator não configurado para este usuário. "
+                            "Peça ao administrador para gerar uma chave."
+                        )
+                    else:
+                        st.info(
+                            "Abra seu aplicativo autenticador (Google Authenticator, Authy, etc.) "
+                            "e use o código de 6 dígitos atual."
+                        )
+
+        recovery_code_input = st.text_input(
+            "Código recebido ou gerado pelo app", key="recovery_code_input"
+        )
+        new_pass1 = st.text_input("Nova senha", type="password", key="recover_new1")
+        new_pass2 = st.text_input(
+            "Confirmar nova senha", type="password", key="recover_new2"
+        )
+        if st.button("Atualizar senha esquecida", key="reset_from_recovery"):
+            user_row = get_user_by_email(recovery_email)
+            if not user_row:
+                st.error("E-mail não encontrado.")
+            elif not new_pass1 or not new_pass2:
+                st.error("Informe e confirme a nova senha.")
+            elif new_pass1 != new_pass2:
+                st.error("As senhas não conferem.")
+            else:
+                preferred_method = user_row["recovery_method"] or recovery_method_choice
+                if preferred_method == "Authenticator":
+                    if not user_row["totp_secret"]:
+                        st.error(
+                            "Nenhum autenticador configurado para este usuário. Peça ao administrador para configurar."
+                        )
+                    else:
+                        totp = pyotp.TOTP(user_row["totp_secret"])
+                        if not recovery_code_input:
+                            st.error("Informe o código do aplicativo autenticador.")
+                        elif not totp.verify(recovery_code_input, valid_window=1):
+                            st.error("Código do autenticador inválido ou expirado.")
+                        else:
+                            reset_user_password(recovery_email, new_pass1)
+                            clear_recovery_state(recovery_email)
+                            st.success("Senha atualizada com sucesso. Faça login novamente.")
+                else:
+                    stored_code = user_row["recovery_code"]
+                    expires_raw = user_row["recovery_expires_at"]
+                    if not stored_code or not expires_raw:
+                        st.error("Nenhum código de recuperação ativo. Gere um novo código.")
+                    else:
+                        expires_at = datetime.fromisoformat(expires_raw)
+                        if datetime.utcnow() > expires_at:
+                            st.error("Código expirado. Gere um novo código de recuperação.")
+                        elif recovery_code_input != stored_code:
+                            st.error("Código inválido.")
+                        else:
+                            reset_user_password(recovery_email, new_pass1)
+                            clear_recovery_state(recovery_email)
+                            st.success(
+                                "Senha atualizada com sucesso. Você já pode fazer login com a nova senha."
+                            )
 
     st.title("🕒 Ponto & Diário de Atividades")
     st.write("Faça login na barra lateral para acessar o sistema.")
@@ -337,6 +523,10 @@ def view_admin():
         new_name = st.text_input("Nome completo")
         new_email = st.text_input("E-mail do usuário")
         new_pass = st.text_input("Senha inicial", type="password")
+        new_phone = st.text_input("Telefone (para SMS, opcional)")
+        recovery_method = st.radio(
+            "Método de recuperação", ["Email", "SMS", "Authenticator"], index=0
+        )
         new_is_admin = st.checkbox("Usuário é administrador?")
 
         if st.button("Criar usuário"):
@@ -345,8 +535,20 @@ def view_admin():
             elif get_user_by_email(new_email):
                 st.error("Já existe usuário com esse e-mail.")
             else:
-                create_user(new_name, new_email, new_pass, new_is_admin)
+                totp_secret = create_user(
+                    new_name,
+                    new_email,
+                    new_pass,
+                    new_is_admin,
+                    phone=new_phone or None,
+                    recovery_method=recovery_method,
+                )
                 st.success("Usuário criado com sucesso!")
+                if recovery_method == "Authenticator" and totp_secret:
+                    st.info(
+                        "Configure o app autenticador do colaborador usando a chave secreta abaixo."
+                    )
+                    st.code(totp_secret, language="text")
 
     with colu2:
         st.markdown("### Resetar senha de usuário existente")
@@ -365,9 +567,20 @@ def view_admin():
                     st.error("Informe a nova senha.")
                 else:
                     reset_user_password(sel_email, new_pass_reset)
+                    clear_recovery_state(sel_email)
                     st.success(f"Senha redefinida para {sel_email}.")
         else:
             st.info("Nenhum usuário cadastrado ainda.")
+
+    st.markdown("---")
+    st.markdown("### Recuperações de acesso em andamento")
+    recuperacoes = listar_recuperacoes_pendentes()
+    if not recuperacoes:
+        st.info("Nenhuma solicitação de recuperação ativa.")
+    else:
+        df_rec = pd.DataFrame(recuperacoes)
+        df_rec["recovery_expires_at"] = df_rec["recovery_expires_at"].fillna("-")
+        st.dataframe(df_rec)
 
     st.markdown("---")
     st.markdown("## Registros de ponto e atividades")
