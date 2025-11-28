@@ -218,6 +218,42 @@ def clear_recovery_state(email: str):
     conn.close()
 
 
+def list_users():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, email, name, is_admin FROM users ORDER BY name")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def delete_user(email: str, remove_points: bool = False):
+    email = normalize_email(email)
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT is_admin FROM users WHERE email = ?", (email,))
+    user_row = cur.fetchone()
+    if not user_row:
+        conn.close()
+        return False, "Usuário não encontrado."
+
+    if user_row["is_admin"]:
+        cur.execute("SELECT COUNT(*) as c FROM users WHERE is_admin = 1")
+        admin_count = cur.fetchone()["c"]
+        if admin_count <= 1:
+            conn.close()
+            return False, "Não é possível remover o último administrador."
+
+    if remove_points:
+        cur.execute("DELETE FROM pontos WHERE usuario = ?", (email,))
+
+    cur.execute("DELETE FROM users WHERE email = ?", (email,))
+    conn.commit()
+    conn.close()
+    return True, f"Usuário {email} removido com sucesso."
+
+
 def reset_all_users():
     """Remove todos os usuários e recria o admin padrão."""
     conn = get_connection()
@@ -646,6 +682,39 @@ def view_admin():
                     st.success(f"Senha redefinida para {sel_email}.")
         else:
             st.info("Nenhum usuário cadastrado ainda.")
+
+    st.markdown("---")
+    st.markdown("### Deletar colaborador")
+    users = list_users()
+    if not users:
+        st.info("Nenhum usuário cadastrado para exclusão.")
+    else:
+        option_map = {}
+        for u in users:
+            role_label = "Admin" if u["is_admin"] else "Colaborador"
+            option_map[f"{u['name']} ({u['email']}) - {role_label}"] = u
+
+        selected_label = st.selectbox("Selecione o usuário para remover", options=list(option_map.keys()))
+        user_to_delete = option_map[selected_label]
+        remove_points = st.checkbox(
+            "Excluir também todos os registros de ponto deste usuário", value=False
+        )
+        confirm_email = st.text_input(
+            "Digite o e-mail do usuário para confirmar", key="confirm_delete_email"
+        )
+
+        if st.button("Deletar usuário"):
+            if normalize_email(confirm_email) != user_to_delete["email"]:
+                st.error("Confirme o e-mail exatamente como cadastrado para prosseguir.")
+            elif st.session_state.user and normalize_email(st.session_state.user["email"]) == user_to_delete["email"]:
+                st.error("Você não pode deletar o próprio usuário enquanto está logado.")
+            else:
+                success, message = delete_user(user_to_delete["email"], remove_points)
+                if success:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
 
     st.markdown("---")
     st.markdown("### Recuperações de acesso em andamento")
