@@ -38,13 +38,24 @@ def generate_recovery_code() -> str:
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Garantir que o banco tenha as tabelas esperadas mesmo após exclusões manuais do arquivo
+    try:
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'")
+    except sqlite3.OperationalError:
+        bootstrap_db(conn)
+    else:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name in ('users','pontos')"
+        )
+        if cur.fetchone()["c"] < 2:
+            bootstrap_db(conn)
     return conn
 
-def init_db():
-    conn = get_connection()
+def bootstrap_db(conn: sqlite3.Connection):
+    """Create base tables if they were removed or the DB file is empty."""
     cur = conn.cursor()
 
-    # tabela de ponto
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS pontos (
@@ -60,7 +71,6 @@ def init_db():
         """
     )
 
-    # tabela de usuários
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -75,6 +85,11 @@ def init_db():
 
     conn.commit()
     ensure_user_columns(conn)
+
+
+def init_db():
+    conn = get_connection()
+    bootstrap_db(conn)
     conn.close()
 
 
