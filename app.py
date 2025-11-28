@@ -202,6 +202,16 @@ def clear_recovery_state(email: str):
     conn.commit()
     conn.close()
 
+
+def reset_all_users():
+    """Remove todos os usuários e recria o admin padrão."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users")
+    conn.commit()
+    conn.close()
+    return ensure_default_admin()
+
 def get_registro(usuario: str, data_str: str):
     conn = get_connection()
     cur = conn.cursor()
@@ -353,6 +363,33 @@ if st.session_state.user is None:
         else:
             st.sidebar.error("E-mail ou senha inválidos.")
 
+    with st.sidebar.expander("Novo cadastro"):
+        new_name_public = st.text_input("Nome completo", key="public_name")
+        new_email_public = st.text_input("E-mail corporativo", key="public_email")
+        new_pass_public = st.text_input("Senha", type="password", key="public_pass1")
+        new_pass_public_conf = st.text_input(
+            "Confirmar senha", type="password", key="public_pass2"
+        )
+        role_public = st.radio(
+            "Perfil de acesso", ["Colaborador", "Administrador"], index=0, key="public_role"
+        )
+        if st.button("Criar conta", key="create_public_account"):
+            if not new_name_public or not new_email_public or not new_pass_public:
+                st.error("Preencha nome, e-mail e senha para criar a conta.")
+            elif new_pass_public != new_pass_public_conf:
+                st.error("As senhas informadas não conferem.")
+            elif get_user_by_email(new_email_public):
+                st.error("Já existe um usuário com este e-mail.")
+            else:
+                create_user(
+                    name=new_name_public,
+                    email=new_email_public,
+                    password=new_pass_public,
+                    is_admin=role_public == "Administrador",
+                    recovery_method="Email",
+                )
+                st.success("Conta criada com sucesso! Faça login com suas credenciais.")
+
     with st.sidebar.expander("Esqueci a senha"):
         recovery_email = st.text_input("E-mail cadastrado", key="recover_email")
         recovery_method_choice = st.selectbox(
@@ -443,6 +480,19 @@ if st.session_state.user is None:
                             st.success(
                                 "Senha atualizada com sucesso. Você já pode fazer login com a nova senha."
                             )
+
+    with st.sidebar.expander("Reset geral de logins"):
+        st.caption(
+            "Remove todos os usuários cadastrados e recria apenas o admin padrão para que o "
+            "cadastro recomece do zero."
+        )
+        if st.button("Resetar logins e senhas", key="reset_everything"):
+            reset_email, reset_pass = reset_all_users()
+            st.success("Base de usuários limpa com sucesso.")
+            if reset_email and reset_pass:
+                st.info(
+                    f"Admin padrão recriado:\nEmail: **{reset_email}**\nSenha: **{reset_pass}**"
+                )
 
     st.title("🕒 Ponto & Diário de Atividades")
     st.write("Faça login na barra lateral para acessar o sistema.")
