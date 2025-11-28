@@ -376,7 +376,7 @@ def carregar_registros(usuario: str = None, data_inicio: str = None, data_fim: s
 # INICIALIZAÇÃO
 # =========================
 
-st.set_page_config(page_title="Ponto & Diário de Atividades", page_icon="🕒", layout="wide")
+st.set_page_config(page_title="Diário de Atividades", page_icon="🕒", layout="wide")
 init_db()
 default_admin_email, default_admin_pass = ensure_default_admin()
 
@@ -545,7 +545,7 @@ if st.session_state.user is None:
                     f"Admin padrão recriado:\nEmail: **{reset_email}**\nSenha: **{reset_pass}**"
                 )
 
-    st.title("🕒 Ponto & Diário de Atividades")
+    st.title("🕒 Diário de Atividades")
     st.write("Faça login na barra lateral para acessar o sistema.")
     st.stop()
 
@@ -560,7 +560,7 @@ if "view_mode" not in st.session_state:
 if user["is_admin"]:
     selected_mode = st.sidebar.radio(
         "Escolha a tela",
-        ["Painel administrativo", "Registrar ponto/atividades"],
+        ["Painel administrativo", "Registrar atividades"],
         index=0 if st.session_state.view_mode == "admin" else 1,
     )
     st.session_state.view_mode = "admin" if selected_mode == "Painel administrativo" else "colab"
@@ -576,7 +576,7 @@ if st.sidebar.button("Sair"):
 # =========================
 
 def view_colaborador(user_name: str):
-    st.title("🕒 Ponto & Diário de Atividades")
+    st.title("🕒 Diário de Atividades")
     st.subheader(f"Olá, {user_name}! Registre seu dia de trabalho.")
 
     data_sel = st.date_input("Data", value=date.today())
@@ -590,7 +590,7 @@ def view_colaborador(user_name: str):
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### Registro de ponto")
+        st.markdown("### Registro de atividades")
 
         if st.button("Registrar ENTRADA agora"):
             hora = datetime.now().strftime("%H:%M")
@@ -637,7 +637,7 @@ def view_colaborador(user_name: str):
 # =========================
 
 def view_admin():
-    st.title("📊 Painel Administrativo - Ponto & Atividades")
+    st.title("📊 Painel Administrativo - Diário de Atividades")
 
     st.markdown("## Gestão de usuários")
 
@@ -711,7 +711,7 @@ def view_admin():
         selected_label = st.selectbox("Selecione o usuário para remover", options=list(option_map.keys()))
         user_to_delete = option_map[selected_label]
         remove_points = st.checkbox(
-            "Excluir também todos os registros de ponto deste usuário", value=False
+            "Excluir também todos os registros de atividades deste usuário", value=False
         )
         confirm_email = st.text_input(
             "Digite o e-mail do usuário para confirmar", key="confirm_delete_email"
@@ -741,7 +741,7 @@ def view_admin():
         st.dataframe(df_rec)
 
     st.markdown("---")
-    st.markdown("## Registros de ponto e atividades")
+    st.markdown("## Registros de atividades")
 
     usuarios = listar_usuarios_ponto()
     usuario_filtro = st.sidebar.selectbox("Filtrar por colaborador", options=["(Todos)"] + usuarios)
@@ -783,11 +783,11 @@ def view_admin():
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Ponto")
+        df.to_excel(writer, index=False, sheet_name="Atividades")
     st.download_button(
         "Baixar planilha XLSX",
         data=output.getvalue(),
-        file_name="ponto_colaboradores.xlsx",
+        file_name="atividades_colaboradores.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
